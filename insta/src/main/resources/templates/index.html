@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InstaVideo - Premium Video Downloader</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="logo">
+                <svg width="40" height="40" viewBox="0 0 512 512">
+                    <rect width="512" height="512" rx="100" fill="#05a081" />
+                    <path d="M150 150 L362 256 L150 362 Z" fill="white" />
+                </svg>
+                <span>InstaVideo</span>
+            </div>
+            <div class="nav-links">
+                <a href="#">Explore</a>
+                <a href="#">License</a>
+                <button class="btn btn-primary">Join</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <section class="hero">
+            <h1>The best free stock videos shared by talented creators.</h1>
+            <div class="search-box">
+                <input type="text" id="videoUrl" placeholder="Paste Pexels or TikTok URL here...">
+                <button id="scrapeBtn" class="btn btn-search">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                </button>
+            </div>
+        </section>
+
+        <section id="previewSection" class="preview-section hidden">
+            <div class="preview-card">
+                <div class="card-header">
+                    <div class="author-info">
+                        <div class="avatar" id="authorAvatar"></div>
+                        <span id="authorName">Loading...</span>
+                    </div>
+                    <div class="actions">
+                        <button class="btn btn-outline">Collect</button>
+                        <button class="btn btn-outline heart">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path
+                                    d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z">
+                                </path>
+                            </svg>
+                        </button>
+                        <button id="downloadBtn" class="btn btn-success">Free Download</button>
+                    </div>
+                </div>
+                <div class="media-container">
+                    <video id="videoPreview" controls poster=""></video>
+                </div>
+                <div class="card-footer">
+                    <h2 id="videoTitle"></h2>
+                    <p id="videoDesc"></p>
+                </div>
+            </div>
+        </section>
+
+        <section class="loading-overlay hidden">
+            <div class="spinner"></div>
+            <p>Processing your video...</p>
+        </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <script>
+        const videoUrlInput = document.getElementById('videoUrl');
+        const scrapeBtn = document.getElementById('scrapeBtn');
+        const previewSection = document.getElementById('previewSection');
+        const videoPreview = document.getElementById('videoPreview');
+        const downloadBtn = document.getElementById('downloadBtn');
+        let storedCookies = '';
+        let storedUA = '';
+        let storedOrigin = '';
+
+        function showToast(msg, isError = false) {
+            toast.textContent = msg;
+            toast.className = `toast ${isError ? 'error' : 'success'}`;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 3000);
+        }
+
+        async function scrapeInfo() {
+            const url = videoUrlInput.value.trim();
+            if (!url) return showToast('Please paste a URL', true);
+
+            loadingOverlay.classList.remove('hidden');
+            previewSection.classList.add('hidden');
+            storedCookies = '';
+            storedUA = '';
+            storedOrigin = '';
+
+            try {
+                const response = await fetch('/api/video/info', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ videoUrl: url })
+                });
+
+                if (!response.ok) throw new Error('Failed to fetch info');
+
+                const data = await response.json();
+
+                document.getElementById('authorName').textContent = data.authorName || 'Pexels Creator';
+                document.getElementById('videoTitle').textContent = data.title;
+                document.getElementById('videoDesc').textContent = data.description || '';
+                videoPreview.src = data.videoUrl;
+                videoPreview.poster = data.thumbnailUrl;
+                storedCookies = data.cookies;
+                storedUA = data.userAgent;
+                storedOrigin = data.originUrl;
+
+                previewSection.classList.remove('hidden');
+                showToast('Video found!');
+            } catch (err) {
+                showToast(err.message, true);
+            } finally {
+                loadingOverlay.classList.add('hidden');
+            }
+        }
+
+        async function downloadVideo() {
+            const url = videoUrlInput.value.trim();
+            downloadBtn.disabled = true;
+            downloadBtn.textContent = 'Downloading...';
+
+            const directUrl = videoPreview.src;
+
+            try {
+                const response = await fetch('/api/video/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        videoUrl: directUrl,
+                        cookies: storedCookies,
+                        userAgent: storedUA,
+                        originUrl: storedOrigin
+                    })
+                });
+
+                if (!response.ok) throw new Error('Download failed');
+
+                const result = await response.text();
+                showToast(result);
+            } catch (err) {
+                showToast(err.message, true);
+            } finally {
+                downloadBtn.disabled = false;
+                downloadBtn.textContent = 'Free Download';
+            }
+        }
+
+        scrapeBtn.addEventListener('click', scrapeInfo);
+        downloadBtn.addEventListener('click', downloadVideo);
+        videoUrlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') scrapeInfo();
+        });
+    </script>
+</body>
+
+</html>
