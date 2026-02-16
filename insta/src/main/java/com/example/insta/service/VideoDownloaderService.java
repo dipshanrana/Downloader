@@ -114,14 +114,23 @@ public class VideoDownloaderService {
         io.github.bonigarcia.wdm.WebDriverManager.chromedriver().setup();
         org.openqa.selenium.chrome.ChromeOptions options = new org.openqa.selenium.chrome.ChromeOptions();
 
+        // Environment Control for Hosting (Headless Mode)
+        String headlessEnv = System.getenv("HEADLESS");
+        if ("true".equalsIgnoreCase(headlessEnv)) {
+            options.addArguments("--headless=new");
+            System.out.println("Running in HEADLESS mode (Server/Docker environment).");
+        } else {
+            options.addArguments("--start-maximized"); // GUI mode for local testing
+        }
+
         options.addArguments("--disable-blink-features=AutomationControlled");
         options.addArguments("--no-sandbox");
         options.addArguments("--disable-dev-shm-usage");
         options.addArguments("--disable-web-security");
         options.addArguments("--allow-running-insecure-content");
         options.addArguments("--ignore-certificate-errors");
-        options.addArguments("--start-maximized");
         options.addArguments("--autoplay-policy=no-user-gesture-required");
+        options.addArguments("--window-size=1920,1080"); // Important for headless element visibility
 
         // Enable performance logging for YouTube network sniffing
         org.openqa.selenium.logging.LoggingPreferences logPrefs = new org.openqa.selenium.logging.LoggingPreferences();
@@ -270,11 +279,7 @@ public class VideoDownloaderService {
                 // videos (4k only etc).
                 // But better to fail than download a broken file.
                 if (currentVideoSrc == null) {
-                    System.err.println("Could not find a guaranteed MP4 stream (itag 18/22).");
-                    // We could fallback to 'bestUrl' but if that causes sabr error, better to
-                    // throw.
-                    throw new RuntimeException(
-                            "Could not find a standard MP4 video stream (itag 18/22). The video might be DASH-only.");
+                    throw new RuntimeException("Could not find a valid video stream (Standard MP4 or Non-Range).");
                 }
             }
             // --- TIKTOK SPECIFIC EXTRACTION ---
@@ -324,40 +329,51 @@ public class VideoDownloaderService {
             }
 
             if (currentVideoSrc != null && currentVideoSrc.startsWith("blob:")) {
-                throw new RuntimeException(
-                        "Detected 'blob:' URL which cannot be fetched directly. Failed to extract real MP4 URL from page data.");
+                throw new RuntimeException("Detected 'blob:' URL. Failed to extract real MP4 link.");
             }
 
-            // --- CHANGED: Use Chrome DevTools Protocol (CDP) to force Browser Download ---
-            // Java/OkHttp is getting 403s. We must let the browser do the download.
-
+            // --- CHANGED: CDP Download with HEADERS ---
             System.out.println("URL Found: " + currentVideoSrc);
+            // 3. Configure Download Behavior
+            System.out.println("Switching to Browser-Native Download via CDP with Referer Injection...");
 
-            System.out.println("Switching to Browser-Native Download via CDP...");
+            Path downloadDirPath = Paths.get(System.getProperty("user.home"), "Downloads");
+            if (!Files.exists(downloadDirPath)) {
+                Files.createDirectories(downloadDirPath);
+                System.out.println("Created download directory: " + downloadDirPath);
+            }
+            String downloadDir = downloadDirPath.toAbsolutePath().toString();
 
-            String downloadDir = Paths.get(System.getProperty("user.home"), "Downloads").toAbsolutePath().toString();
+            org.openqa.selenium.chromium.ChromiumDriver cDriver = (org.openqa.selenium.chromium.ChromiumDriver) driver;
 
-            // 1. Configure CDP to allow downloads
-            java.util.Map<String, Object> params = new java.util.HashMap<>();
-            params.put("behavior", "allow");
-            params.put("downloadPath", downloadDir);
+            // 1. Enable Network Domain
+            cDriver.executeCdpCommand("Network.enable", java.util.Collections.emptyMap());
 
-            ((org.openqa.selenium.chromium.ChromiumDriver) driver).executeCdpCommand("Page.setDownloadBehavior",
-                    params);
+            // 2. Set Extra Headers (Referer is critical for 403 avoidance)
+            java.util.Map<String, Object> headers = new java.util.HashMap<>();
+            headers.put("Referer", "https://www.youtube.com/");
+            headers.put("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
-            // 2. Trigger Download by Navigating
+            java.util.Map<String, Object> headerParams = new java.util.HashMap<>();
+            headerParams.put("headers", headers);
+            cDriver.executeCdpCommand("Network.setExtraHTTPHeaders", headerParams);
+
+            // 3. Configure Download Behavior
+            java.util.Map<String, Object> dlParams = new java.util.HashMap<>();
+            dlParams.put("behavior", "allow");
+            dlParams.put("downloadPath", downloadDir);
+            cDriver.executeCdpCommand("Page.setDownloadBehavior", dlParams);
+
+            // 4. Trigger Download by Direct Navigation (in same tab to ensure headers
+            // apply)
             System.out.println("Navigating to video URL to trigger download...");
+            driver.get(currentVideoSrc);
 
-            // We open a new tab to avoid messing up the current session state too much
-            ((org.openqa.selenium.JavascriptExecutor) driver)
-                    .executeScript("window.open('" + currentVideoSrc + "','_blank');");
-
-            // 3. Monitor Download Directory
-            // We need to wait for a new file to appear and finish downloading (.crdownload
-            // to go away)
+            // 5. Monitor Download Directory
             System.out.println("Waiting for download to complete in: " + downloadDir);
 
-            Path downloadedFile = waitForDownload(downloadDir, 300); // Wait up to 300 seconds (5 mins)
+            Path downloadedFile = waitForDownload(downloadDir, 300); // 5 mins
 
             if (downloadedFile == null) {
                 throw new RuntimeException("Download timed out or failed to start.");
@@ -365,8 +381,6 @@ public class VideoDownloaderService {
 
             System.out.println("Browser Downloaded to: " + downloadedFile);
 
-            // 4. Rename file if needed (Optional, but browser filenames can be weird
-            // 'videoplayback')
             try {
                 String namingPrefix = targetUrl.contains("instagram.com") ? "instagram_"
                         : targetUrl.contains("tiktok.com") ? "tiktok_" : "youtube_";
