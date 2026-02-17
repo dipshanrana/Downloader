@@ -63,15 +63,28 @@ public class VideoScraperController {
             String url = request.getVideoUrl();
             String directUrl;
             if (url.contains("tiktok.com")) {
-                directUrl = url;
+                PexelsScraperService.ScrapedInfo info = tiktokScraperService.getScrapedInfo(url);
+                directUrl = info.getVideoUrl();
+                request.setCookies(info.getCookies());
+                request.setUserAgent(info.getUserAgent());
             } else if (url.contains("instagram.com")) {
-                directUrl = url;
+                PexelsScraperService.ScrapedInfo info = instagramScraperService.getScrapedInfo(url);
+                directUrl = info.getVideoUrl();
+                request.setCookies(info.getCookies());
+                request.setUserAgent(info.getUserAgent());
             } else if (url.contains("youtube.com") || url.contains("youtu.be")) {
                 // For YouTube, the service returns the direct video stream URL
                 directUrl = youtubeScraperService.scrapeVideoUrl(url);
             } else {
                 directUrl = pexelsScraperService.scrapeVideoUrl(url);
             }
+
+            System.out.println("DEBUG: Scraper Controller - URL: " + url);
+            System.out.println("DEBUG: Scraper Controller - Direct URL: " + directUrl);
+            System.out.println("DEBUG: Scraper Controller - Cookies Length: "
+                    + (request.getCookies() != null ? request.getCookies().length() : "null"));
+            System.out.println("DEBUG: Scraper Controller - UA: " + request.getUserAgent());
+
             Path downloadedPath = videoDownloaderService.downloadVideo(
                     directUrl,
                     request.getCookies(),

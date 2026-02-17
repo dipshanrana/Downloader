@@ -140,6 +140,25 @@ public class InstagramScraperService {
             info.setDescription(ogDesc.attr("content"));
         }
 
+        // Fallback: Look for shared data script if video URL is still null
+        if (info.getVideoUrl() == null) {
+            for (Element script : doc.select("script")) {
+                String data = script.data();
+                if (data.contains("video_url")) {
+                    int start = data.indexOf("\"video_url\":\"");
+                    if (start != -1) {
+                        start += 13;
+                        int end = data.indexOf("\"", start);
+                        if (end > start) {
+                            String vUrl = data.substring(start, end).replace("\\u0026", "&");
+                            info.setVideoUrl(vUrl);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         // 6. Author
         // Instagram titles usually format as "Name (@username) on Instagram..."
         String title = doc.title();

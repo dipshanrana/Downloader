@@ -114,20 +114,73 @@ public class TikTokScraperService {
         info.setUserAgent(result.userAgent);
         info.setOriginUrl(tiktokUrl);
 
+        // 1. Try __UNIVERSAL_DATA_FOR_REHYDRATION__
         Element script = doc.getElementById("__UNIVERSAL_DATA_FOR_REHYDRATION__");
         if (script != null) {
             try {
                 JsonNode root = objectMapper.readTree(script.data());
                 JsonNode videoDetail = root.path("__DEFAULT_SCOPE__").path("webapp.video-detail");
-                if (videoDetail.has("itemInfo")) {
-                    JsonNode item = videoDetail.get("itemInfo").get("itemStruct");
-                    info.setVideoUrl(item.path("video").path("playAddr").asText());
-                    info.setThumbnailUrl(item.path("video").path("cover").asText());
-                    info.setDescription(item.path("desc").asText());
-                    info.setAuthorName(item.path("author").path("nickname").asText());
+
+                // Use robust path() traversal
+                JsonNode itemStruct = videoDetail.path("itemInfo").path("itemStruct");
+                if (!itemStruct.isMissingNode()) {
+                    info.setVideoUrl(itemStruct.path("video").path("playAddr").asText(null));
+                    info.setThumbnailUrl(itemStruct.path("video").path("cover").asText(null));
+                    info.setDescription(itemStruct.path("desc").asText(null));
+                    info.setAuthorName(itemStruct.path("author").path("nickname").asText(null));
                 }
             } catch (Exception e) {
+                System.out.println("TikTok: Error parsing hydration data: " + e.getMessage());
             }
+        }
+
+        // 2. Try SIGI_STATE (Legacy/Alternative)
+        if (info.getVideoUrl() == null) {
+            Element sigi = doc.getElementById("SIGI_STATE");
+            if (sigi != null) {
+                try {
+                    JsonNode root = objectMapper.readTree(sigi.data());
+                    JsonNode itemModule = root.path("ItemModule");
+                    if (!itemModule.isMissingNode()) {
+                        // Get the first item in the map
+                        String firstKey = itemModule.fieldNames().hasNext() ? itemModule.fieldNames().next() : null;
+                        if (firstKey != null) {
+                            JsonNode item = itemModule.get(firstKey);
+                            info.setVideoUrl(item.path("video").path("playAddr").asText(null));
+                            info.setThumbnailUrl(item.path("video").path("cover").asText(null));
+                            info.setDescription(item.path("desc").asText(null));
+                            info.setAuthorName(item.path("author").asText(null));
+                            System.out.println("TikTok: Found video URL in SIGI_STATE");
+                        }
+                    }
+                } catch (Exception e) {
+                    System.out.println("TikTok: Error parsing SIGI_STATE: " + e.getMessage());
+                }
+            }
+        }
+
+        // 3. Script Fallback
+        if (info.getVideoUrl() == null) {
+            System.out.println("TikTok: Video URL not found in JSON, trying scripts...");
+            for (Element s : doc.select("script")) {
+                String data = s.data();
+                if (data.contains("playAddr")) {
+                    int start = data.indexOf("playAddr\":\"") + 11;
+                    int end = data.indexOf("\"", start);
+                    if (start > 10 && end > start) {
+                        String vUrl = data.substring(start, end).replace("\\u002F", "/");
+                        info.setVideoUrl(vUrl);
+                        System.out.println("TikTok: Found video URL in script: " + vUrl);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (info.getVideoUrl() == null) {
+            System.err.println("TikTok: Failed to extract video URL from both hydration and scripts.");
+            // Log a snippet of HTML to see if we are getting blocked/captcha
+            System.err.println("TikTok Page Title: " + doc.title());
         }
 
         return info;

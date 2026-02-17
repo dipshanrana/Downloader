@@ -26,7 +26,9 @@ public class VideoDownloaderService {
         }
 
         // TikTok specific: Use Selenium MAINLY.
-        if (isSeleniumTarget(videoUrl) || (originUrl != null && isSeleniumTarget(originUrl))) {
+        // But if we already have cookies (from scraper), use OkHttp to avoid opening
+        // browser again.
+        if (isSeleniumTarget(videoUrl) && (cookies == null || cookies.isEmpty())) {
             System.out.println("Attempting Selenium download for URL: " + videoUrl);
             try {
                 // Pass null for UA/Cookies to signal "use defaults"
@@ -66,6 +68,17 @@ public class VideoDownloaderService {
                         "Failed to download video. HTTP code: " + response.code() + " " + response.message());
             }
 
+            String contentType = response.header("Content-Type");
+            System.out.println("DEBUG: Response Content-Type: " + contentType);
+            if (contentType != null && contentType.contains("text/html")) {
+                // Read a bit of the body to see what it is
+                String errorBody = response.peekBody(1024).string();
+                System.err.println("DEBUG: HTML Body Preview: " + errorBody);
+                throw new RuntimeException(
+                        "Server returned HTML instead of Video. Likely access denied or invalid URL. Content-Type: "
+                                + contentType);
+            }
+
             if (response.body() == null) {
                 throw new RuntimeException("Empty response body from video URL");
             }
@@ -93,7 +106,7 @@ public class VideoDownloaderService {
 
     private boolean isSeleniumTarget(String url) {
         return url != null
-                && (url.contains("tiktok.com") || url.contains("tiktokcdn.com") || url.contains("instagram.com"));
+                && (url.contains("tiktok.com") || url.contains("instagram.com"));
     }
 
     private Path downloadWithSelenium(String videoUrl, String originUrl, String userAgent, String cookies)
