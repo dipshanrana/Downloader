@@ -1,0 +1,28 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# IDE files
+.idea
+*.iml
+.vscode
+
+# Build output (we build inside Docker)
+target/
+
+# Documentation
+README.md
+HELP.md
+
+# Docker files
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Nixpacks config
+nixpacks.toml
+
+# Downloaded files
+downloads/
+insta/

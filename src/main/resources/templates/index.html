@@ -71,7 +71,7 @@
             </div>
         </section>
 
-        <section class="loading-overlay hidden">
+        <section id="loadingOverlay" class="loading-overlay hidden">
             <div class="spinner"></div>
             <p>Processing your video...</p>
         </section>
@@ -85,6 +85,8 @@
         const previewSection = document.getElementById('previewSection');
         const videoPreview = document.getElementById('videoPreview');
         const downloadBtn = document.getElementById('downloadBtn');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const toast = document.getElementById('toast');
         let storedCookies = '';
         let storedUA = '';
         let storedOrigin = '';
@@ -137,6 +139,8 @@
 
         async function downloadVideo() {
             const url = videoUrlInput.value.trim();
+            const fileName = videoPreview.src.split('/').pop().split('?')[0] || 'video.mp4';
+
             downloadBtn.disabled = true;
             downloadBtn.textContent = 'Downloading...';
 
@@ -156,8 +160,17 @@
 
                 if (!response.ok) throw new Error('Download failed');
 
-                const result = await response.text();
-                showToast(result);
+                const blob = await response.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = fileName.endsWith('.mp4') ? fileName : `${fileName}.mp4`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(downloadUrl);
+                a.remove();
+
+                showToast('Downloaded to your PC!');
             } catch (err) {
                 showToast(err.message, true);
             } finally {

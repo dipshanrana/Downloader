@@ -4,6 +4,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -13,6 +14,9 @@ import java.time.Duration;
 
 @Service
 public class VideoDownloaderService {
+
+    @Value("${app.download.dir}")
+    private String downloadDir;
 
     private final OkHttpClient client = new OkHttpClient.Builder()
             .connectTimeout(Duration.ofSeconds(60))
@@ -94,7 +98,11 @@ public class VideoDownloaderService {
                 }
             }
 
-            Path outputPath = Paths.get(System.getProperty("user.home"), "Downloads", fileName);
+            Path outputDirectory = Paths.get(downloadDir);
+            if (!Files.exists(outputDirectory)) {
+                Files.createDirectories(outputDirectory);
+            }
+            Path outputPath = outputDirectory.resolve(fileName);
             try (InputStream inputStream = response.body().byteStream()) {
                 Files.copy(inputStream, outputPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
@@ -350,12 +358,12 @@ public class VideoDownloaderService {
             // 3. Configure Download Behavior
             System.out.println("Switching to Browser-Native Download via CDP with Referer Injection...");
 
-            Path downloadDirPath = Paths.get(System.getProperty("user.home"), "Downloads");
+            Path downloadDirPath = Paths.get(downloadDir);
             if (!Files.exists(downloadDirPath)) {
                 Files.createDirectories(downloadDirPath);
                 System.out.println("Created download directory: " + downloadDirPath);
             }
-            String downloadDir = downloadDirPath.toAbsolutePath().toString();
+            String currentDownloadDir = downloadDirPath.toAbsolutePath().toString();
 
             org.openqa.selenium.chromium.ChromiumDriver cDriver = (org.openqa.selenium.chromium.ChromiumDriver) driver;
 
@@ -375,7 +383,7 @@ public class VideoDownloaderService {
             // 3. Configure Download Behavior
             java.util.Map<String, Object> dlParams = new java.util.HashMap<>();
             dlParams.put("behavior", "allow");
-            dlParams.put("downloadPath", downloadDir);
+            dlParams.put("downloadPath", currentDownloadDir);
             cDriver.executeCdpCommand("Page.setDownloadBehavior", dlParams);
 
             // 4. Trigger Download by Direct Navigation (in same tab to ensure headers
@@ -384,9 +392,9 @@ public class VideoDownloaderService {
             driver.get(currentVideoSrc);
 
             // 5. Monitor Download Directory
-            System.out.println("Waiting for download to complete in: " + downloadDir);
+            System.out.println("Waiting for download to complete in: " + currentDownloadDir);
 
-            Path downloadedFile = waitForDownload(downloadDir, 300); // 5 mins
+            Path downloadedFile = waitForDownload(currentDownloadDir, 300); // 5 mins
 
             if (downloadedFile == null) {
                 throw new RuntimeException("Download timed out or failed to start.");
@@ -398,7 +406,7 @@ public class VideoDownloaderService {
                 String namingPrefix = targetUrl.contains("instagram.com") ? "instagram_"
                         : targetUrl.contains("tiktok.com") ? "tiktok_" : "youtube_";
                 String newName = namingPrefix + System.currentTimeMillis() + ".mp4";
-                Path targetPath = Paths.get(downloadDir, newName);
+                Path targetPath = Paths.get(currentDownloadDir, newName);
                 Files.move(downloadedFile, targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 return targetPath;
             } catch (Exception e) {

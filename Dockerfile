@@ -1,29 +1,41 @@
-# Base Image with Java 21
+# ============================================
+# Stage 1: Build the application
+# ============================================
+FROM eclipse-temurin:21-jdk AS builder
+
+WORKDIR /build
+
+# Copy Maven wrapper and pom.xml first for better caching
+COPY .mvn/ .mvn/
+COPY mvnw pom.xml ./
+
+# Ensure mvnw has execution permissions and correct line endings
+RUN chmod +x mvnw && sed -i 's/\r$//' mvnw
+
+# Download dependencies (this layer will be cached if pom.xml doesn't change)
+RUN ./mvnw dependency:go-offline
+
+# Copy source code
+COPY src/ ./src/
+
+# Build the application
+RUN ./mvnw clean package -DskipTests
+
+# ============================================
+# Stage 2: Runtime image
+# ============================================
 FROM eclipse-temurin:21-jre
 
-# Install Chrome for Selenium
+# Install Google Chrome and its dependencies
 RUN apt-get update && apt-get install -y \
     wget \
+    curl \
     gnupg \
-    unzip \
-    libnss3 \
-    libgconf-2-4 \
-    libfontconfig1 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxi6 \
-    libxtst6 \
-    libxrandr2 \
-    libasound2 \
-    libatk1.0-0 \
-    libgtk-3-0 \
-    libxss1 \
-    lsb-release \
-    xdg-utils \
-    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
+    ca-certificates \
+    apt-transport-https \
+    --no-install-recommends \
+    && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
     && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
@@ -31,8 +43,8 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy JAR
-COPY target/insta-0.0.1-SNAPSHOT.jar app.jar
+# Copy JAR from builder stage
+COPY --from=builder /build/target/insta-0.0.1-SNAPSHOT.jar app.jar
 
 # Define Environment Variables
 ENV HEADLESS=true

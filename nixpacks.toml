@@ -2,7 +2,7 @@
 nixPkgs = ["...", "jdk21"]
 
 [phases.build]
-cmds = ["cd insta && ./mvnw clean package -DskipTests"]
+cmds = ["./mvnw clean package -DskipTests"]
 
 [start]
-cmd = "cd insta && java -jar target/insta-0.0.1-SNAPSHOT.jar"
+cmd = "java -jar target/insta-0.0.1-SNAPSHOT.jar"

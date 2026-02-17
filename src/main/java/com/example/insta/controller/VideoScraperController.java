@@ -5,9 +5,13 @@ import com.example.insta.service.TikTokScraperService;
 import com.example.insta.service.InstagramScraperService;
 import com.example.insta.service.YoutubeScraperService;
 import com.example.insta.service.VideoDownloaderService;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 
 import java.nio.file.Path;
 
@@ -73,17 +77,10 @@ public class VideoScraperController {
                 request.setCookies(info.getCookies());
                 request.setUserAgent(info.getUserAgent());
             } else if (url.contains("youtube.com") || url.contains("youtu.be")) {
-                // For YouTube, the service returns the direct video stream URL
                 directUrl = youtubeScraperService.scrapeVideoUrl(url);
             } else {
                 directUrl = pexelsScraperService.scrapeVideoUrl(url);
             }
-
-            System.out.println("DEBUG: Scraper Controller - URL: " + url);
-            System.out.println("DEBUG: Scraper Controller - Direct URL: " + directUrl);
-            System.out.println("DEBUG: Scraper Controller - Cookies Length: "
-                    + (request.getCookies() != null ? request.getCookies().length() : "null"));
-            System.out.println("DEBUG: Scraper Controller - UA: " + request.getUserAgent());
 
             Path downloadedPath = videoDownloaderService.downloadVideo(
                     directUrl,
@@ -91,7 +88,14 @@ public class VideoScraperController {
                     request.getUserAgent(),
                     request.getOriginUrl() != null ? request.getOriginUrl()
                             : (url.contains("tiktok.com") ? url : null));
-            return ResponseEntity.ok("Video downloaded successfully: " + downloadedPath.getFileName());
+
+            Resource resource = new UrlResource(downloadedPath.toUri());
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType("video/mp4"))
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            "attachment; filename=\"" + downloadedPath.getFileName().toString() + "\"")
+                    .body(resource);
         } catch (Exception e) {
             return ResponseEntity
                     .status(500)

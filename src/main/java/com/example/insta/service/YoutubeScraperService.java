@@ -26,6 +26,16 @@ public class YoutubeScraperService {
         logPrefs.enable(LogType.PERFORMANCE, Level.ALL);
         options.setCapability("goog:loggingPrefs", logPrefs);
 
+        // Environment Control for Hosting (Headless Mode)
+        String headlessEnv = System.getenv("HEADLESS");
+        if ("true".equalsIgnoreCase(headlessEnv)) {
+            options.addArguments("--headless=new");
+            System.out.println("Running YouTube Scraper in HEADLESS mode.");
+        } else {
+            // Default to headless for stability in non-GUI environments
+            options.addArguments("--headless=new");
+        }
+
         options.addArguments("--disable-blink-features=AutomationControlled");
         options.addArguments("--no-sandbox");
         options.addArguments("--disable-dev-shm-usage");
