@@ -12,6 +12,7 @@ import org.openqa.selenium.chrome.ChromeOptions;
 import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -19,6 +20,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 public class TikTokScraperService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -32,7 +34,18 @@ public class TikTokScraperService {
     private ExtractionResult getPageContentWithSelenium(String url) {
         WebDriverManager.chromedriver().setup();
         ChromeOptions options = new ChromeOptions();
-        options.addArguments("--headless=new");
+
+        // Environment Control for Hosting (Headless Mode)
+        String headlessEnv = System.getenv("HEADLESS");
+        if ("true".equalsIgnoreCase(headlessEnv)) {
+            options.addArguments("--headless=new");
+            log.info("Running TikTok Scraper in HEADLESS mode.");
+        } else {
+            // Default to headless new for scraping unless debugging is needed, checking
+            // "HEADLESS" env var usually implies server.
+            options.addArguments("--headless=new");
+        }
+
         options.addArguments("--disable-blink-features=AutomationControlled");
         options.addArguments("--no-sandbox");
         options.addArguments("--disable-dev-shm-usage");
@@ -59,7 +72,7 @@ public class TikTokScraperService {
 
             return result;
         } catch (Exception e) {
-            System.err.println("TikTok Selenium error: " + e.getMessage());
+            log.error("TikTok Selenium error: {}", e.getMessage());
             return null;
         } finally {
             if (driver != null)
@@ -85,6 +98,7 @@ public class TikTokScraperService {
                         return playAddr.asText();
                 }
             } catch (Exception e) {
+                log.warn("Error parsing simple hydration data: {}", e.getMessage());
             }
         }
 
@@ -130,7 +144,7 @@ public class TikTokScraperService {
                     info.setAuthorName(itemStruct.path("author").path("nickname").asText(null));
                 }
             } catch (Exception e) {
-                System.out.println("TikTok: Error parsing hydration data: " + e.getMessage());
+                log.warn("TikTok: Error parsing hydration data: {}", e.getMessage());
             }
         }
 
@@ -150,18 +164,18 @@ public class TikTokScraperService {
                             info.setThumbnailUrl(item.path("video").path("cover").asText(null));
                             info.setDescription(item.path("desc").asText(null));
                             info.setAuthorName(item.path("author").asText(null));
-                            System.out.println("TikTok: Found video URL in SIGI_STATE");
+                            log.info("TikTok: Found video URL in SIGI_STATE");
                         }
                     }
                 } catch (Exception e) {
-                    System.out.println("TikTok: Error parsing SIGI_STATE: " + e.getMessage());
+                    log.warn("TikTok: Error parsing SIGI_STATE: {}", e.getMessage());
                 }
             }
         }
 
         // 3. Script Fallback
         if (info.getVideoUrl() == null) {
-            System.out.println("TikTok: Video URL not found in JSON, trying scripts...");
+            log.info("TikTok: Video URL not found in JSON, trying scripts...");
             for (Element s : doc.select("script")) {
                 String data = s.data();
                 if (data.contains("playAddr")) {
@@ -170,7 +184,7 @@ public class TikTokScraperService {
                     if (start > 10 && end > start) {
                         String vUrl = data.substring(start, end).replace("\\u002F", "/");
                         info.setVideoUrl(vUrl);
-                        System.out.println("TikTok: Found video URL in script: " + vUrl);
+                        log.info("TikTok: Found video URL in script: {}", vUrl);
                         break;
                     }
                 }
@@ -178,9 +192,9 @@ public class TikTokScraperService {
         }
 
         if (info.getVideoUrl() == null) {
-            System.err.println("TikTok: Failed to extract video URL from both hydration and scripts.");
+            log.error("TikTok: Failed to extract video URL from both hydration and scripts.");
             // Log a snippet of HTML to see if we are getting blocked/captcha
-            System.err.println("TikTok Page Title: " + doc.title());
+            log.debug("TikTok Page Title: {}", doc.title());
         }
 
         return info;

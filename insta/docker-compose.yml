@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  insta-downloader:
+    build: .
+    container_name: insta-video-downloader
+    ports:
+      - "8086:8086"
+    environment:
+      - HEADLESS=true
+      - APP_DOWNLOAD_DIR=/app/downloads
+    volumes:
+      - ./downloads:/app/downloads
+    restart: unless-stopped
