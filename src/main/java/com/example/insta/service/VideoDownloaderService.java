@@ -112,6 +112,139 @@ public class VideoDownloaderService {
         }
     }
 
+    /**
+     * Downloads a single image from the given URL and saves it to the download
+     * directory.
+     * Handles Instagram CDN (cdninstagram.com / fbcdn.net) signed URLs with proper
+     * headers.
+     */
+    public Path downloadImage(String imageUrl, String cookies, String userAgent, String referer) throws Exception {
+        if (imageUrl == null || imageUrl.isEmpty()) {
+            throw new RuntimeException("Image URL is null or empty");
+        }
+
+        String ua = (userAgent != null && !userAgent.isEmpty()) ? userAgent
+                : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
+
+        String effectiveReferer = (referer != null && !referer.isEmpty()) ? referer : "https://www.instagram.com/";
+
+        Request.Builder requestBuilder = new Request.Builder()
+                .url(imageUrl)
+                .addHeader("User-Agent", ua)
+                .addHeader("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                .addHeader("Accept-Language", "en-US,en;q=0.9")
+                .addHeader("Accept-Encoding", "gzip, deflate, br")
+                .addHeader("Connection", "keep-alive")
+                .addHeader("Referer", effectiveReferer)
+                .addHeader("Origin", "https://www.instagram.com")
+                .addHeader("Sec-Fetch-Dest", "image")
+                .addHeader("Sec-Fetch-Mode", "no-cors")
+                .addHeader("Sec-Fetch-Site", "cross-site")
+                .addHeader("Cache-Control", "no-cache")
+                .addHeader("Pragma", "no-cache");
+
+        if (cookies != null && !cookies.isEmpty()) {
+            requestBuilder.addHeader("Cookie", cookies);
+        }
+
+        try (Response response = client.newCall(requestBuilder.build()).execute()) {
+            System.out.println("Image download response: HTTP " + response.code() + " for "
+                    + imageUrl.substring(0, Math.min(80, imageUrl.length())));
+
+            if (!response.isSuccessful()) {
+                String body = "";
+                try {
+                    body = response.peekBody(512).string();
+                } catch (Exception ignored) {
+                }
+                throw new RuntimeException("Failed to download image. HTTP " + response.code()
+                        + ". The image URL may have expired — please re-fetch the post info first. Body: " + body);
+            }
+            if (response.body() == null) {
+                throw new RuntimeException("Empty response body from image URL");
+            }
+
+            // Determine extension from Content-Type
+            String contentType = response.header("Content-Type", "image/jpeg");
+            String ext = ".jpg";
+            if (contentType != null) {
+                if (contentType.contains("png"))
+                    ext = ".png";
+                else if (contentType.contains("webp"))
+                    ext = ".webp";
+                else if (contentType.contains("gif"))
+                    ext = ".gif";
+            }
+
+            String fileName = "instagram_image_" + System.currentTimeMillis() + ext;
+
+            Path outputDirectory = Paths.get(downloadDir);
+            if (!Files.exists(outputDirectory)) {
+                Files.createDirectories(outputDirectory);
+            }
+            Path outputPath = outputDirectory.resolve(fileName);
+            try (InputStream inputStream = response.body().byteStream()) {
+                Files.copy(inputStream, outputPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            long fileSize = Files.size(outputPath);
+            System.out.println("Image downloaded to: " + outputPath + " (" + fileSize + " bytes)");
+
+            if (fileSize < 1000) {
+                Files.deleteIfExists(outputPath);
+                throw new RuntimeException(
+                        "Downloaded file is too small (" + fileSize + " bytes). Image URL may have expired.");
+            }
+
+            return outputPath;
+        }
+    }
+
+    /**
+     * Fetches image bytes directly from a CDN URL without saving to disk.
+     * Returns Object[]{String contentType, byte[] bytes}.
+     * Used for streaming images directly to the browser.
+     */
+    public Object[] fetchImageBytes(String imageUrl, String cookies, String userAgent, String referer)
+            throws Exception {
+        if (imageUrl == null || imageUrl.isEmpty()) {
+            throw new RuntimeException("Image URL is null or empty");
+        }
+        String ua = (userAgent != null && !userAgent.isEmpty()) ? userAgent
+                : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
+        String effectiveReferer = (referer != null && !referer.isEmpty()) ? referer : "https://www.instagram.com/";
+
+        Request.Builder rb = new Request.Builder()
+                .url(imageUrl)
+                .addHeader("User-Agent", ua)
+                .addHeader("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                .addHeader("Accept-Language", "en-US,en;q=0.9")
+                .addHeader("Connection", "keep-alive")
+                .addHeader("Referer", effectiveReferer)
+                .addHeader("Origin", "https://www.instagram.com")
+                .addHeader("Sec-Fetch-Dest", "image")
+                .addHeader("Sec-Fetch-Mode", "no-cors")
+                .addHeader("Sec-Fetch-Site", "cross-site")
+                .addHeader("Cache-Control", "no-cache");
+        if (cookies != null && !cookies.isEmpty())
+            rb.addHeader("Cookie", cookies);
+
+        try (Response response = client.newCall(rb.build()).execute()) {
+            System.out.println("fetchImageBytes HTTP " + response.code() + " for "
+                    + imageUrl.substring(0, Math.min(80, imageUrl.length())));
+            if (!response.isSuccessful() || response.body() == null) {
+                throw new RuntimeException("HTTP " + response.code() + " fetching image. URL may have expired.");
+            }
+            String contentType = response.header("Content-Type", "image/jpeg");
+            byte[] bytes = response.body().bytes();
+            if (bytes.length < 500) {
+                throw new RuntimeException("Image too small (" + bytes.length + " bytes). URL may have expired.");
+            }
+            System.out.println("fetchImageBytes OK: " + bytes.length + " bytes, type=" + contentType);
+            return new Object[] { contentType, bytes };
+        }
+    }
+
     private boolean isSeleniumTarget(String url) {
         return url != null
                 && (url.contains("tiktok.com") || url.contains("instagram.com"));

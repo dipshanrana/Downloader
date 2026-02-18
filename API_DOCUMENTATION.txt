@@ -1,0 +1,176 @@
+================================================================================
+         INSTAGRAM / VIDEO DOWNLOADER - API DOCUMENTATION
+================================================================================
+Base URL : http://localhost:8090
+Server   : Spring Boot (Java)
+Port     : 8090
+--------------------------------------------------------------------------------
+
+
+================================================================================
+ENDPOINT 1 — Download All Images from an Instagram Post URL
+================================================================================
+URL     : POST http://localhost:8090/api/instagram/download
+Headers : Content-Type: application/json
+
+REQUEST BODY (minimum):
+{
+  "postUrl": "https://www.instagram.com/p/DUwpylzk48h/"
+}
+
+REQUEST BODY (with browser cookies for login-required posts):
+{
+  "postUrl": "https://www.instagram.com/p/DUwpylzk48h/",
+  "browserCookies": "sessionid=abc123; csrftoken=xyz456; ds_user_id=12345"
+}
+
+RESPONSE:
+  - Single image post  → Returns image file directly (image/jpeg)
+                         Filename: instagram_image.jpg
+  - Carousel post      → Returns a ZIP file (application/zip)
+                         Filename: instagram_images.zip
+                         Contents: image_1.jpg, image_2.jpg, image_3.jpg ...
+  - Video post         → HTTP 400, Header X-Error: "This is a video post"
+  - Not found/private  → HTTP 404, Header X-Error: "No images found"
+  - Server error       → HTTP 500
+
+NOTE: This request takes 15-30 seconds because it uses a headless Chrome
+      browser (Selenium) to load the Instagram page and collect all images.
+
+CURL EXAMPLE:
+  curl -X POST http://localhost:8090/api/instagram/download ^
+       -H "Content-Type: application/json" ^
+       -d "{\"postUrl\": \"https://www.instagram.com/p/DUwpylzk48h/\"}" ^
+       --output instagram_download.zip
+
+--------------------------------------------------------------------------------
+
+
+================================================================================
+ENDPOINT 2 — Download a Single Image from a Direct CDN URL
+================================================================================
+URL     : POST http://localhost:8090/api/image/download
+Headers : Content-Type: application/json
+
+REQUEST BODY:
+{
+  "imageUrl": "https://cdninstagram.com/v/t51.2885-15/..."
+}
+
+IMPORTANT: This endpoint only accepts DIRECT CDN image URLs.
+           Do NOT send Instagram post URLs (/p/...) here.
+           CDN URLs look like: https://cdninstagram.com/... or https://scontent.cdninstagram.com/...
+
+RESPONSE:
+  - Success → Returns image bytes directly (image/jpeg or image/png)
+  - Error   → HTTP 400 or 500
+
+CURL EXAMPLE:
+  curl -X POST http://localhost:8090/api/image/download ^
+       -H "Content-Type: application/json" ^
+       -d "{\"imageUrl\": \"https://cdninstagram.com/v/t51.2885-15/example.jpg\"}" ^
+       --output image.jpg
+
+--------------------------------------------------------------------------------
+
+
+================================================================================
+ENDPOINT 3 — Proxy / Preview an Image (No CORS Issues)
+================================================================================
+URL     : GET http://localhost:8090/api/image/proxy?url=IMAGE_URL
+
+QUERY PARAM:
+  url = the direct CDN image URL (URL-encoded)
+
+RESPONSE:
+  - Returns the image bytes with correct Content-Type header
+  - Use this in <img src="..."> tags to preview Instagram images in browser
+
+EXAMPLE:
+  GET http://localhost:8090/api/image/proxy?url=https://cdninstagram.com/v/t51.2885-15/example.jpg
+
+--------------------------------------------------------------------------------
+
+
+================================================================================
+ENDPOINT 4 — Scrape Instagram Post (Returns JSON metadata + image URLs)
+================================================================================
+URL     : POST http://localhost:8090/api/video/download
+Headers : Content-Type: application/json
+
+REQUEST BODY:
+{
+  "videoUrl": "https://www.instagram.com/p/DUwpylzk48h/"
+}
+
+RESPONSE (JSON):
+{
+  "mediaType": "carousel",
+  "imageUrls": [
+    "https://cdninstagram.com/...",
+    "https://cdninstagram.com/..."
+  ],
+  "videoUrl": null,
+  "thumbnailUrl": "https://cdninstagram.com/...",
+  "title": "...",
+  "description": "...",
+  "authorName": "..."
+}
+
+NOTE: Use this endpoint first to get the image URLs, then use
+      Endpoint 2 (/api/image/download) to download each image.
+
+--------------------------------------------------------------------------------
+
+
+================================================================================
+HOW TO GET YOUR BROWSER COOKIES (for private/login-required posts)
+================================================================================
+1. Open Google Chrome and go to https://www.instagram.com
+2. Make sure you are LOGGED IN to your Instagram account
+3. Press F12 to open Developer Tools
+4. Click the "Application" tab (top menu in DevTools)
+5. In the left sidebar, expand "Cookies" → click "https://www.instagram.com"
+6. Find and copy the values of these cookies:
+     - sessionid
+     - csrftoken
+     - ds_user_id
+7. Format them as a single string:
+     sessionid=VALUE; csrftoken=VALUE; ds_user_id=VALUE
+8. Pass this string as "browserCookies" in your POST request to /api/instagram/download
+
+EXAMPLE browserCookies value:
+  "sessionid=12345%3AabcXYZ; csrftoken=abcdefgh12345; ds_user_id=12345678"
+
+--------------------------------------------------------------------------------
+
+
+================================================================================
+QUICK REFERENCE TABLE
+================================================================================
+
+  Use Case                          | Method | URL
+  ----------------------------------|--------|----------------------------------
+  Download from Instagram post URL  | POST   | /api/instagram/download
+  Download from direct CDN URL      | POST   | /api/image/download
+  Preview image in browser          | GET    | /api/image/proxy?url=...
+  Get post metadata + image URLs    | POST   | /api/video/download
+
+================================================================================
+POSTMAN SETUP
+================================================================================
+1. Open Postman
+2. Create a new request
+3. Set method to POST
+4. Set URL to: http://localhost:8090/api/instagram/download
+5. Click "Body" tab → select "raw" → select "JSON" from dropdown
+6. Paste this in the body:
+   {
+     "postUrl": "https://www.instagram.com/p/YOUR_POST_ID/"
+   }
+7. Click Send
+8. The response will be a file — click "Save Response" → "Save to a file"
+
+================================================================================
+                          END OF DOCUMENTATION
+================================================================================

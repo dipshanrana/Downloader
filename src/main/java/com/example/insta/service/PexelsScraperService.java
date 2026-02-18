@@ -15,6 +15,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -136,6 +138,8 @@ public class PexelsScraperService {
         private String cookies;
         private String userAgent;
         private String originUrl;
+        private List<String> imageUrls = new ArrayList<>();
+        private String mediaType; // "video", "image", "carousel"
 
         public String getTitle() {
             return title;
@@ -199,6 +203,22 @@ public class PexelsScraperService {
 
         public void setOriginUrl(String originUrl) {
             this.originUrl = originUrl;
+        }
+
+        public List<String> getImageUrls() {
+            return imageUrls;
+        }
+
+        public void setImageUrls(List<String> imageUrls) {
+            this.imageUrls = imageUrls;
+        }
+
+        public String getMediaType() {
+            return mediaType;
+        }
+
+        public void setMediaType(String mediaType) {
+            this.mediaType = mediaType;
         }
     }
 }
