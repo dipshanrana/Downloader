@@ -207,7 +207,7 @@ public class InstagramScraperService {
                     result.mediaType = "image";
                 else
                     result.mediaType = "unknown";
-            }
+            }   
 
             result.html = driver.getPageSource();
             return result;
