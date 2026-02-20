@@ -229,40 +229,41 @@ public class InstagramScraperService {
         Set<String> seen = new LinkedHashSet<>();
 
         try {
-            // Collect the first visible image
-            collectCurrentImage(js, seen);
+            // Collect images from the first slide
+            collectCurrentImages(js, seen);
 
-            // Try clicking "Next" up to 20 times (handles up to 20-image carousels)
+            // Try clicking "Next" up to 20 times
             for (int i = 0; i < 20; i++) {
-                // Look for the carousel "Next" button
-                // Instagram uses aria-label="Next" or a right-chevron button
                 List<WebElement> nextBtns = driver.findElements(
                         By.cssSelector("button[aria-label='Next'], button[aria-label='next'], " +
-                                "div[role='button'][aria-label='Next'], " +
-                                "svg[aria-label='Next']"));
+                                "div[role='button'] > div > svg[aria-label='Next'], " +
+                                "button [aria-label='Next']"));
 
                 if (nextBtns.isEmpty()) {
-                    // Also try by SVG parent button
-                    nextBtns = driver.findElements(By.xpath(
-                            "//button[contains(@aria-label,'Next') or contains(@aria-label,'next')]"));
+                    // Try xpath as fallback
+                    nextBtns = driver.findElements(By.xpath("//button[.//svg[@aria-label='Next']]"));
                 }
 
                 if (nextBtns.isEmpty()) {
-                    log.debug("No more Next button found after {} slides", i + 1);
+                    log.debug("Carousel: No 'Next' button found after {} slides.", i + 1);
                     break;
                 }
 
                 WebElement nextBtn = nextBtns.get(0);
                 try {
-                    ((JavascriptExecutor) driver).executeScript("arguments[0].click();", nextBtn);
-                    Thread.sleep(1200); // wait for slide transition
-                    collectCurrentImage(js, seen);
+                    // Sometime the button is covered or not clickable yet
+                    js.executeScript("arguments[0].scrollIntoView({block: 'center'});", nextBtn);
+                    Thread.sleep(500);
+                    js.executeScript("arguments[0].click();", nextBtn);
+
+                    // Wait for the slide animation and new content to load
+                    Thread.sleep(1500);
+                    collectCurrentImages(js, seen);
                 } catch (Exception e) {
-                    log.debug("Click next failed at slide {}: {}", i + 1, e.getMessage());
+                    log.debug("Carousel: Click next failed at slide {}: {}", i + 1, e.getMessage());
                     break;
                 }
             }
-
             collected.addAll(seen);
         } catch (Exception e) {
             log.warn("Carousel navigation error: {}", e.getMessage());
@@ -272,31 +273,36 @@ public class InstagramScraperService {
     }
 
     /**
-     * Extracts the currently visible post image URL from the DOM.
+     * Extracts ALL currently visible post images from the DOM.
+     * Instagram carousels often have 2-3 images in the DOM at once (prev, current,
+     * next).
      */
-    private void collectCurrentImage(JavascriptExecutor js, Set<String> seen) {
+    private void collectCurrentImages(JavascriptExecutor js, Set<String> seen) {
         try {
-            // Instagram renders the main post image in an <img> inside the article
-            Object src = js.executeScript(
-                    "var candidates = document.querySelectorAll('article img, div[role=\"presentation\"] img');" +
+            Object result = js.executeScript(
+                    "var urls = [];" +
+                            "var candidates = document.querySelectorAll('article img, div[role=\"presentation\"] img, div[role=\"button\"] img');"
+                            +
                             "for (var i = 0; i < candidates.length; i++) {" +
                             "  var s = candidates[i].src;" +
                             "  if (s && (s.includes('cdninstagram') || s.includes('fbcdn')) " +
                             "      && !s.includes('150x150') && !s.includes('s150x150')" +
                             "      && !s.includes('s320x320') && !s.includes('s240x240')" +
                             "      && s.startsWith('http')) {" +
-                            "    return s;" +
+                            "    urls.push(s);" +
                             "  }" +
                             "}" +
-                            "return null;");
-            if (src != null && !src.toString().isEmpty()) {
-                boolean added = seen.add(src.toString());
-                if (added)
-                    log.debug("Collected image: ...{}",
-                            src.toString().substring(Math.max(0, src.toString().length() - 40)));
+                            "return urls;");
+
+            if (result instanceof List) {
+                List<?> urls = (List<?>) result;
+                for (Object u : urls) {
+                    if (u != null)
+                        seen.add(u.toString());
+                }
             }
         } catch (Exception e) {
-            log.debug("collectCurrentImage failed: {}", e.getMessage());
+            log.debug("collectCurrentImages failed: {}", e.getMessage());
         }
     }
 
@@ -345,12 +351,22 @@ public class InstagramScraperService {
         if (ogTitle != null)
             info.setAuthorName(ogTitle.attr("content"));
 
-        // Final fallback for video
         if (info.getVideoUrl() == null) {
             Element ogVideo = doc.selectFirst("meta[property='og:video']");
             if (ogVideo != null) {
                 info.setVideoUrl(ogVideo.attr("content"));
                 info.setMediaType("video");
+            }
+        }
+
+        // If it's an image post but no high-res images were found in the gallery,
+        // fallback to og:image
+        if (info.getVideoUrl() == null && info.getImageUrls().isEmpty() && info.getThumbnailUrl() != null) {
+            List<String> fallbackImages = new ArrayList<>();
+            fallbackImages.add(info.getThumbnailUrl());
+            info.setImageUrls(fallbackImages);
+            if (info.getMediaType() == null || info.getMediaType().equals("unknown")) {
+                info.setMediaType("image");
             }
         }
 

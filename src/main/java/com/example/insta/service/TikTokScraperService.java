@@ -127,6 +127,7 @@ public class TikTokScraperService {
         info.setCookies(result.cookies);
         info.setUserAgent(result.userAgent);
         info.setOriginUrl(tiktokUrl);
+        info.setMediaType("video"); // TikTok is always a video
 
         // 1. Try __UNIVERSAL_DATA_FOR_REHYDRATION__
         Element script = doc.getElementById("__UNIVERSAL_DATA_FOR_REHYDRATION__");

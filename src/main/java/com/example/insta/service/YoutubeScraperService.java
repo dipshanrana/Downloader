@@ -140,6 +140,7 @@ public class YoutubeScraperService {
         info.setOriginUrl(youtubeUrl);
         info.setTitle("YouTube Video");
         info.setAuthorName("YouTube Creator");
+        info.setMediaType("video");
         return info;
     }
 }
