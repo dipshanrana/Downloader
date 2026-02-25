@@ -118,19 +118,27 @@ public class InstagramScraperService {
             result.userAgent = (String) js.executeScript("return navigator.userAgent;");
 
             // -------------------------------------------------------
-            // Step 1: Check for video (og:video meta)
+            // Step 1: Check for video (og:video meta or <video> tag)
             // -------------------------------------------------------
             try {
                 Object videoMeta = js.executeScript(
-                        "var m = document.querySelector('meta[property=\"og:video\"]');" +
+                        "var v = document.querySelector('video');" +
+                                "if (v && v.src) return v.src;" +
+                                "if (v && v.querySelector('source') && v.querySelector('source').src) return v.querySelector('source').src;"
+                                +
+                                "var m = document.querySelector('meta[property=\"og:video\"]');" +
                                 "return m ? m.getAttribute('content') : null;");
+
                 if (videoMeta != null && !videoMeta.toString().isEmpty()) {
-                    result.videoUrl = videoMeta.toString();
-                    result.mediaType = "video";
-                    log.info("Instagram: Found video URL from og:video meta tag");
+                    String vUrl = videoMeta.toString();
+                    if (vUrl.startsWith("http")) {
+                        result.videoUrl = vUrl;
+                        result.mediaType = "video";
+                        log.info("Instagram: Found video URL from DOM/meta tag");
+                    }
                 }
             } catch (Exception e) {
-                log.debug("og:video extraction failed: {}", e.getMessage());
+                log.debug("Video extraction failed: {}", e.getMessage());
             }
 
             // -------------------------------------------------------
@@ -144,7 +152,7 @@ public class InstagramScraperService {
             // -------------------------------------------------------
             // Step 3: Fallback — scan JSON script tags for display_url
             // -------------------------------------------------------
-            if (result.videoUrl == null && result.imageUrls.isEmpty()) {
+            if (result.videoUrl == null) {
                 try {
                     Object jsonResult = js.executeScript(
                             "var scripts = document.querySelectorAll('script[type=\"application/json\"]');" +
@@ -166,14 +174,15 @@ public class InstagramScraperService {
             // -------------------------------------------------------
             // Step 4: Fallback — scan all inline scripts
             // -------------------------------------------------------
-            if (result.videoUrl == null && result.imageUrls.isEmpty()) {
+            if (result.videoUrl == null) {
                 try {
                     Object scriptData = js.executeScript(
                             "var scripts = document.getElementsByTagName('script');" +
                                     "var combined = '';" +
                                     "for (var i = 0; i < scripts.length; i++) {" +
                                     "  var t = scripts[i].textContent || '';" +
-                                    "  if (t.includes('display_url') || t.includes('video_url')) combined += t;" +
+                                    "  if (t.includes('display_url') || t.includes('video_url') || t.includes('.mp4') || t.includes('video_versions')) combined += t;"
+                                    +
                                     "}" +
                                     "return combined.length > 0 ? combined : null;");
                     if (scriptData != null) {
@@ -183,8 +192,28 @@ public class InstagramScraperService {
                             if (vUrl != null) {
                                 result.videoUrl = vUrl;
                                 result.mediaType = "video";
+                                log.info("Instagram: Found video URL via JSON video_url key");
                             }
                         }
+
+                        // Ultimate fallback: broad search for any .mp4 URL in the scripts
+                        if (result.videoUrl == null) {
+                            java.util.regex.Matcher m = java.util.regex.Pattern
+                                    .compile("[\"'](https?[^\"']+\\.mp4[^\"']*)[\"']")
+                                    .matcher(combined);
+                            while (m.find()) {
+                                String potentialUrl = m.group(1).replace("\\u0026", "&").replace("\\/", "/")
+                                        .replace("\\\\", "");
+                                if (potentialUrl.startsWith("http") && !potentialUrl.contains("sample")
+                                        && !potentialUrl.contains("dummy")) {
+                                    result.videoUrl = potentialUrl;
+                                    result.mediaType = "video";
+                                    log.info("Instagram: Found video URL via broad .mp4 search");
+                                    break;
+                                }
+                            }
+                        }
+
                         result.imageUrls.addAll(extractDisplayUrls(combined));
                         log.info("Instagram: Fallback script scan found {} images", result.imageUrls.size());
                     }
@@ -201,13 +230,17 @@ public class InstagramScraperService {
 
             // Determine media type
             if (result.mediaType == null) {
-                if (result.imageUrls.size() > 1)
+                if (url.contains("/reel/") || url.contains("/tv/") || url.contains("/v/")) {
+                    result.mediaType = "video";
+                    log.info("Instagram: URL format indicates it's a video/reel.");
+                } else if (result.imageUrls.size() > 1) {
                     result.mediaType = "carousel";
-                else if (!result.imageUrls.isEmpty())
+                } else if (!result.imageUrls.isEmpty()) {
                     result.mediaType = "image";
-                else
+                } else {
                     result.mediaType = "unknown";
-            }   
+                }
+            }
 
             result.html = driver.getPageSource();
             return result;
@@ -234,14 +267,23 @@ public class InstagramScraperService {
 
             // Try clicking "Next" up to 20 times
             for (int i = 0; i < 20; i++) {
-                List<WebElement> nextBtns = driver.findElements(
-                        By.cssSelector("button[aria-label='Next'], button[aria-label='next'], " +
-                                "div[role='button'] > div > svg[aria-label='Next'], " +
-                                "button [aria-label='Next']"));
+                List<WebElement> nextBtns = new ArrayList<>();
+                for (int retry = 0; retry < 3; retry++) {
+                    nextBtns = driver.findElements(
+                            By.cssSelector("button[aria-label='Next'], button[aria-label='next'], " +
+                                    "div[role='button'] > div > svg[aria-label='Next'], " +
+                                    "button [aria-label='Next']"));
 
-                if (nextBtns.isEmpty()) {
-                    // Try xpath as fallback
-                    nextBtns = driver.findElements(By.xpath("//button[.//svg[@aria-label='Next']]"));
+                    if (nextBtns.isEmpty()) {
+                        nextBtns = driver.findElements(By.xpath("//button[.//svg[@aria-label='Next']]"));
+                    }
+                    if (!nextBtns.isEmpty()) {
+                        break;
+                    }
+                    try {
+                        Thread.sleep(500);
+                    } catch (Exception ignored) {
+                    }
                 }
 
                 if (nextBtns.isEmpty()) {
@@ -254,10 +296,13 @@ public class InstagramScraperService {
                     // Sometime the button is covered or not clickable yet
                     js.executeScript("arguments[0].scrollIntoView({block: 'center'});", nextBtn);
                     Thread.sleep(500);
-                    js.executeScript("arguments[0].click();", nextBtn);
+                    // Use modern mouse event dispatch instead of simple click()
+                    js.executeScript(
+                            "arguments[0].dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));",
+                            nextBtn);
 
                     // Wait for the slide animation and new content to load
-                    Thread.sleep(1500);
+                    Thread.sleep(2000);
                     collectCurrentImages(js, seen);
                 } catch (Exception e) {
                     log.debug("Carousel: Click next failed at slide {}: {}", i + 1, e.getMessage());
@@ -385,36 +430,22 @@ public class InstagramScraperService {
     /** Extracts all display_url values from a JSON string blob. */
     private List<String> extractDisplayUrls(String data) {
         List<String> urls = new ArrayList<>();
-        int searchFrom = 0;
-        while (true) {
-            int idx = data.indexOf("\"display_url\":\"", searchFrom);
-            if (idx == -1)
-                break;
-            int start = idx + 15;
-            int end = data.indexOf("\"", start);
-            if (end > start) {
-                String u = data.substring(start, end)
-                        .replace("\\u0026", "&").replace("\\/", "/");
-                if (u.startsWith("http"))
-                    urls.add(u);
-                searchFrom = end;
-            } else
-                break;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"display_url\"\\s*:\\s*\"([^\"]+)\"")
+                .matcher(data);
+        while (m.find()) {
+            String u = m.group(1).replace("\\u0026", "&").replace("\\/", "/");
+            if (u.startsWith("http"))
+                urls.add(u);
         }
         return urls;
     }
 
     /** Extracts a single string value for a given JSON key. */
     private String extractJsonStringValue(String data, String key) {
-        String search = "\"" + key + "\":\"";
-        int idx = data.indexOf(search);
-        if (idx == -1)
-            return null;
-        int start = idx + search.length();
-        int end = data.indexOf("\"", start);
-        if (end > start) {
-            return data.substring(start, end)
-                    .replace("\\u0026", "&").replace("\\/", "/");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]+)\"")
+                .matcher(data);
+        if (m.find()) {
+            return m.group(1).replace("\\u0026", "&").replace("\\/", "/");
         }
         return null;
     }

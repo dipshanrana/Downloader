@@ -330,7 +330,8 @@ public class VideoScraperController {
                     request.setCookies(info.getCookies());
                     request.setUserAgent(info.getUserAgent());
                 } else if (url.contains("instagram.com")) {
-                    PexelsScraperService.ScrapedInfo info = instagramScraperService.getScrapedInfo(url);
+                    PexelsScraperService.ScrapedInfo info = instagramScraperService.getScrapedInfo(url,
+                            request.getCookies());
                     directUrl = info.getVideoUrl();
                     request.setCookies(info.getCookies());
                     request.setUserAgent(info.getUserAgent());
@@ -338,6 +339,12 @@ public class VideoScraperController {
                     directUrl = youtubeScraperService.scrapeVideoUrl(url);
                 } else {
                     directUrl = pexelsScraperService.scrapeVideoUrl(url);
+                }
+
+                // If it's still null, pass the post URL to the downloader to handle via
+                // embedded Selenium logic
+                if (directUrl == null || directUrl.isEmpty()) {
+                    directUrl = url;
                 }
             }
 

@@ -29,14 +29,12 @@ public class VideoDownloaderService {
             throw new RuntimeException("Video URL is null or empty");
         }
 
-        // TikTok specific: Use Selenium MAINLY.
-        // But if we already have cookies (from scraper), use OkHttp to avoid opening
-        // browser again.
-        if (isSeleniumTarget(videoUrl) && (cookies == null || cookies.isEmpty())) {
+        // TikTok & Instagram specific: Use Selenium MAINLY for post URLs.
+        if (isSeleniumTarget(videoUrl)) {
             System.out.println("Attempting Selenium download for URL: " + videoUrl);
             try {
-                // Pass null for UA/Cookies to signal "use defaults"
-                return downloadWithSelenium(videoUrl, originUrl, null, null);
+                // Pass cookies so private videos can be downloaded!
+                return downloadWithSelenium(videoUrl, originUrl, userAgent, cookies);
             } catch (Exception e) {
                 System.err.println("Selenium download failed: " + e.getMessage());
                 e.printStackTrace();
@@ -246,8 +244,14 @@ public class VideoDownloaderService {
     }
 
     private boolean isSeleniumTarget(String url) {
-        return url != null
-                && (url.contains("tiktok.com") || url.contains("instagram.com"));
+        if (url == null)
+            return false;
+        // Don't trigger for direct CDN or MP4 links
+        if (url.contains(".mp4") || url.contains("cdninstagram") || url.contains("fbcdn") || url.contains("bytecdn")) {
+            return false;
+        }
+        return url.contains("tiktok.com/") || url.contains("instagram.com/p/") || url.contains("instagram.com/reel/")
+                || url.contains("instagram.com/tv/");
     }
 
     private Path downloadWithSelenium(String videoUrl, String originUrl, String userAgent, String cookies)
@@ -301,6 +305,31 @@ public class VideoDownloaderService {
             System.out.println(
                     ">>> IMPORTANT: If a Captcha/Login appears, please solve it manually in the browser window! <<<");
 
+            // Inject cookies if provided
+            if (cookies != null && !cookies.isEmpty()) {
+                String domainStr = targetUrl.contains("instagram.com") ? "https://www.instagram.com/"
+                        : targetUrl.contains("tiktok.com") ? "https://www.tiktok.com/" : null;
+                if (domainStr != null) {
+                    driver.get(domainStr);
+                    Thread.sleep(2000);
+                    String cookieDomain = targetUrl.contains("instagram.com") ? ".instagram.com" : ".tiktok.com";
+                    for (String cookiePair : cookies.split(";")) {
+                        cookiePair = cookiePair.trim();
+                        int eq = cookiePair.indexOf('=');
+                        if (eq > 0) {
+                            String name = cookiePair.substring(0, eq).trim();
+                            String value = cookiePair.substring(eq + 1).trim();
+                            try {
+                                org.openqa.selenium.Cookie cookie = new org.openqa.selenium.Cookie.Builder(name, value)
+                                        .domain(cookieDomain).path("/").isSecure(true).build();
+                                driver.manage().addCookie(cookie);
+                            } catch (Exception ce) {
+                            }
+                        }
+                    }
+                }
+            }
+
             driver.get(targetUrl);
 
             // Allow time for page load and potential captcha
@@ -325,9 +354,15 @@ public class VideoDownloaderService {
                     if (currentVideoSrc == null) {
                         String jsonScript = "var scripts = document.getElementsByTagName('script');" +
                                 "for (var i = 0; i < scripts.length; i++) {" +
-                                "  if (scripts[i].innerText.includes('video_url')) {" +
-                                "     var match = scripts[i].innerText.match(/\"video_url\":\"(.*?)\"/);" +
+                                "  var text = scripts[i].innerText || scripts[i].textContent;" +
+                                "  if (text.includes('video_url')) {" +
+                                "     var match = text.match(/\"video_url\":\"(.*?)\"/);" +
                                 "     if (match && match[1]) return match[1].replace(/\\\\u0026/g, '&');" +
+                                "  }" +
+                                "  var mp4Match = text.match(/[\"'](https?[^\"']+\\.mp4[^\"']*)[\"']/);" +
+                                "  if (mp4Match && mp4Match[1] && !mp4Match[1].includes('sample')) {" +
+                                "     return mp4Match[1].replace(/\\\\u0026/g, '&').replace(/\\\\\\//g, '/').replace(/\\\\/g, '');"
+                                +
                                 "  }" +
                                 "}" +
                                 "return null;";
@@ -335,6 +370,34 @@ public class VideoDownloaderService {
                         if (jsonResult != null) {
                             currentVideoSrc = jsonResult.toString();
                             System.out.println("Extracted Instagram URL from JSON Script: " + currentVideoSrc);
+                        }
+                    }
+
+                    // Try 3: Network Sniffing (Ultimate Fallback for stealthy .mp4)
+                    if (currentVideoSrc == null) {
+                        System.out.println("Scanning network logs for Instagram MP4 streams...");
+                        long startTime = System.currentTimeMillis();
+                        while (System.currentTimeMillis() - startTime < 15000 && currentVideoSrc == null) {
+                            org.openqa.selenium.logging.LogEntries entries = driver.manage().logs()
+                                    .get(org.openqa.selenium.logging.LogType.PERFORMANCE);
+                            for (org.openqa.selenium.logging.LogEntry entry : entries) {
+                                String msg = entry.getMessage();
+                                if (msg.contains(".mp4") && msg.contains("url\":\"http")) {
+                                    java.util.regex.Matcher m = java.util.regex.Pattern
+                                            .compile("\"url\":\"(https?[^\"]+\\.mp4[^\"]*)\"").matcher(msg);
+                                    if (m.find()) {
+                                        String candidateUrl = m.group(1);
+                                        if (!candidateUrl.contains("sample") && !candidateUrl.contains("dummy")) {
+                                            currentVideoSrc = candidateUrl;
+                                            System.out
+                                                    .println("Found MP4 stream from network logs: " + currentVideoSrc);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if (currentVideoSrc == null)
+                                Thread.sleep(500);
                         }
                     }
                 } catch (Exception e) {

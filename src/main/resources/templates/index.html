@@ -255,11 +255,18 @@
                 downloadAllBtn.classList.add('hidden');
                 imageGrid.innerHTML = '';
 
-                if (storedMediaType === 'video' && data.videoUrl) {
+                if (storedMediaType === 'video') {
                     // --- VIDEO POST ---
-                    videoPreview.src = data.videoUrl;
-                    videoPreview.poster = data.thumbnailUrl || '';
-                    videoPreview.classList.remove('hidden');
+                    // Even if we can't play it directly (hidden .mp4), we can still download it via backend
+                    if (data.videoUrl) {
+                        videoPreview.src = data.videoUrl;
+                        videoPreview.poster = data.thumbnailUrl || '';
+                        videoPreview.classList.remove('hidden');
+                    } else if (data.thumbnailUrl) {
+                        // Show thumbnail preview if raw video URL is obfuscated
+                        imagePreview.src = `/api/image/proxy?url=${encodeURIComponent(data.thumbnailUrl)}`;
+                        imagePreview.classList.remove('hidden');
+                    }
                     downloadBtn.classList.remove('hidden');
                     downloadBtn.textContent = 'Free Download Video';
 
